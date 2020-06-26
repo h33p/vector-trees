@@ -171,16 +171,16 @@ impl<V: Ord> BVecTreeNode<V> {
 
 pub struct BVecTree<V> {
     root: Option<u32>,
+    free_head: Option<u32>,
     tree_buf: Vec<BVecTreeNode<V>>,
-    free_nodes: Vec<u32>,
 }
 
 impl<V> Default for BVecTree<V> {
     fn default() -> Self {
         Self {
             root: None,
+            free_head: None,
             tree_buf: vec![],
-            free_nodes: vec![],
         }
     }
 }
@@ -210,8 +210,8 @@ impl<V: Ord + Debug> BVecTree<V> {
 
     pub fn clear(&mut self) {
         self.root = None;
+        self.free_head = None;
         self.tree_buf.clear();
-        self.free_nodes.clear();
     }
 
     pub fn height(&self) -> usize {
@@ -530,8 +530,11 @@ impl<V: Ord + Debug> BVecTree<V> {
     }
 
     fn allocate_node(&mut self) -> u32 {
-        if let Some(idx) = self.free_nodes.pop() {
-            *self.get_node_mut(idx) = BVecTreeNode::default();
+        if let Some(idx) = self.free_head {
+            let free_node = self.get_node_mut(idx);
+            let child_zero = free_node.children[0];
+            *free_node = BVecTreeNode::default();
+            self.free_head = child_zero;
             idx
         } else {
             let ret = self.tree_buf.len() as u32;
@@ -541,13 +544,15 @@ impl<V: Ord + Debug> BVecTree<V> {
     }
 
     fn free_node(&mut self, node_id: u32) {
+        let head = self.free_head;
         let node = self.get_node_mut(node_id);
 
         //Make sure all the keys and children are taken out before freeing
         debug_assert!(node.keys.iter().filter_map(|x| x.as_ref()).count() == 0);
         debug_assert!(node.children.iter().filter_map(|x| x.as_ref()).count() == 0);
 
-        self.free_nodes.push(node_id);
+        node.children[0] = head;
+        self.free_head = Some(node_id);
     }
 
     pub fn print_tree(&self) {

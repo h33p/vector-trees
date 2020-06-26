@@ -23,16 +23,16 @@ impl<V> Default for AVLNode<V> {
 
 pub struct VecAVLTree<V> {
     root: Option<u32>,
+    free_head: Option<u32>,
     tree_buf: Vec<AVLNode<V>>,
-    free_entries: Vec<u32>,
 }
 
 impl<V> Default for VecAVLTree<V> {
     fn default() -> Self {
         Self {
             root: None,
+            free_head: None,
             tree_buf: vec![],
-            free_entries: vec![],
         }
     }
 }
@@ -43,13 +43,9 @@ impl<V: Ord + Debug> VecAVLTree<V> {
     }
 
     pub fn clear(&mut self) {
-        self.tree_buf
-            .iter_mut()
-            .for_each(|x| *x = AVLNode::default());
+        self.tree_buf.clear();
         self.root = None;
-        self.free_entries.clear();
-        self.free_entries
-            .extend((0..self.tree_buf.len()).map(|x| x as u32));
+        self.free_head = None
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &V> {
@@ -61,15 +57,11 @@ impl<V: Ord + Debug> VecAVLTree<V> {
     }
 
     pub fn len(&self) -> usize {
-        self.tree_buf.len() - self.free_entries.len()
+        self.iter().count()
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    pub fn free_entries(&self) -> usize {
-        self.free_entries.len()
     }
 
     pub fn insert(&mut self, value: V) -> Option<V> {
@@ -391,8 +383,12 @@ impl<V: Ord + Debug> VecAVLTree<V> {
     }
 
     fn alloc_entry(&mut self) -> u32 {
-        match self.free_entries.pop() {
-            Some(idx) => idx,
+        match self.free_head.take() {
+            Some(idx) => {
+                self.free_head = self.tree_buf[idx as usize].left;
+                self.tree_buf[idx as usize] = AVLNode::default();
+                idx
+            }
             None => {
                 let idx = self.tree_buf.len() as u32;
                 self.tree_buf.push(AVLNode::default());
@@ -402,11 +398,13 @@ impl<V: Ord + Debug> VecAVLTree<V> {
     }
 
     fn free_entry(&mut self, entry: u32) -> V {
+        let free_head = self.free_head.take();
         let node = self.get_node_mut(entry);
         debug_assert!(node.left.is_none());
         debug_assert!(node.right.is_none());
         let ret = replace(&mut node.entry, None);
-        self.free_entries.push(entry);
+        node.left = free_head;
+        self.free_head = Some(entry);
         ret.unwrap()
     }
 }

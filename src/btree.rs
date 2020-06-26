@@ -1,5 +1,7 @@
+use crate::Vector;
 use core::cmp::{Ord, Ordering};
 use core::fmt::Debug;
+use core::marker::PhantomData;
 use core::mem;
 
 pub const B: usize = 8;
@@ -7,14 +9,14 @@ pub const MAX_CHILDREN: usize = B * 2;
 pub const MAX_KEYS: usize = MAX_CHILDREN - 1;
 
 #[derive(Debug)]
-pub struct BVecTreeNode<V> {
-    keys: [Option<V>; MAX_KEYS],
+pub struct BVecTreeNode<K, V> {
+    keys: [Option<(K, V)>; MAX_KEYS],
     children: [Option<u32>; MAX_CHILDREN],
     cur_keys: usize,
     leaf: bool,
 }
 
-impl<V> Default for BVecTreeNode<V> {
+impl<K, V> Default for BVecTreeNode<K, V> {
     fn default() -> Self {
         Self {
             keys: Default::default(),
@@ -25,8 +27,8 @@ impl<V> Default for BVecTreeNode<V> {
     }
 }
 
-impl<V: Ord> BVecTreeNode<V> {
-    pub fn find_key_id(&self, value: &V) -> (usize, bool) {
+impl<K: Ord, V> BVecTreeNode<K, V> {
+    pub fn find_key_id(&self, value: &K) -> (usize, bool) {
         //Binary search is simply slower when optimized
         /*match self
             .keys[..self.cur_keys]
@@ -38,7 +40,7 @@ impl<V: Ord> BVecTreeNode<V> {
         let keys = &self.keys[..self.cur_keys];
 
         for (i, item) in keys.iter().enumerate().take(self.cur_keys) {
-            match value.cmp(item.as_ref().unwrap()) {
+            match value.cmp(&item.as_ref().unwrap().0) {
                 Ordering::Greater => {}
                 Ordering::Equal => {
                     return (i, true);
@@ -93,7 +95,7 @@ impl<V: Ord> BVecTreeNode<V> {
         self.cur_keys -= 1;
     }
 
-    fn remove_key(&mut self, key_id: usize) -> (Option<V>, Option<u32>) {
+    fn remove_key(&mut self, key_id: usize) -> (Option<(K, V)>, Option<u32>) {
         let key = self.keys[key_id].take();
         let child = self.children[key_id].take();
 
@@ -102,7 +104,7 @@ impl<V: Ord> BVecTreeNode<V> {
         (key, child)
     }
 
-    fn remove_key_rchild(&mut self, key_id: usize) -> (Option<V>, Option<u32>) {
+    fn remove_key_rchild(&mut self, key_id: usize) -> (Option<(K, V)>, Option<u32>) {
         let key = self.keys[key_id].take();
         let child = self.children[key_id + 1].take();
 
@@ -111,15 +113,19 @@ impl<V: Ord> BVecTreeNode<V> {
         (key, child)
     }
 
-    pub fn insert_leaf_key(&mut self, idx: usize, key: V) {
+    pub fn insert_leaf_key(&mut self, idx: usize, key: (K, V)) {
         debug_assert!(self.leaf);
         debug_assert!(idx <= self.cur_keys);
         self.shift_right(idx);
         self.keys[idx] = Some(key);
     }
 
-    pub fn insert_node(&mut self, value: V) -> Option<V> {
-        let (idx, exact) = self.find_key_id(&value);
+    pub fn insert_node_at(&mut self, value: (K, V), idx: usize) -> Option<(K, V)> {
+        let exact = if self.cur_keys > idx {
+            value.0 == self.keys[idx].as_ref().unwrap().0
+        } else {
+            false
+        };
 
         if exact {
             mem::replace(&mut self.keys[idx], Some(value))
@@ -130,8 +136,18 @@ impl<V: Ord> BVecTreeNode<V> {
         }
     }
 
-    pub fn insert_node_rchild(&mut self, value: V) -> Option<V> {
-        let (idx, exact) = self.find_key_id(&value);
+    pub fn insert_node(&mut self, value: (K, V)) -> Option<(K, V)> {
+        let idx = self.find_key_id(&value.0).0;
+        self.insert_node_at(value, idx)
+    }
+
+    pub fn insert_node_rchild_at(&mut self, value: (K, V), idx: usize) -> Option<(K, V)> {
+        let exact = if self.cur_keys > idx {
+            debug_assert!(value.0 <= self.keys[idx].as_ref().unwrap().0);
+            value.0 == self.keys[idx].as_ref().unwrap().0
+        } else {
+            false
+        };
 
         if exact {
             mem::replace(&mut self.keys[idx], Some(value))
@@ -142,16 +158,21 @@ impl<V: Ord> BVecTreeNode<V> {
         }
     }
 
+    pub fn insert_node_rchild(&mut self, value: (K, V)) -> Option<(K, V)> {
+        let idx = self.find_key_id(&value.0).0;
+        self.insert_node_rchild_at(value, idx)
+    }
+
     /// Appends all keys and children of other to the end of `self`, adding `mid` as key in the middle
-    pub fn merge(&mut self, mid: V, other: &mut Self) {
+    pub fn merge(&mut self, mid: (K, V), other: &mut Self) {
         debug_assert!(self.cur_keys + 1 + other.cur_keys <= MAX_KEYS);
 
         if self.cur_keys > 0 {
-            debug_assert!(&mid > self.keys[self.cur_keys - 1].as_ref().unwrap());
+            debug_assert!(mid.0 > self.keys[self.cur_keys - 1].as_ref().unwrap().0);
         }
 
         if other.cur_keys > 0 {
-            debug_assert!(&mid < other.keys[0].as_ref().unwrap());
+            debug_assert!(mid.0 < other.keys[0].as_ref().unwrap().0);
         }
 
         self.keys[self.cur_keys] = Some(mid);
@@ -169,39 +190,49 @@ impl<V: Ord> BVecTreeNode<V> {
     }
 }
 
-pub struct BVecTree<V> {
+pub struct BVecTreeMap<S, K, V> {
     root: Option<u32>,
     free_head: Option<u32>,
-    tree_buf: Vec<BVecTreeNode<V>>,
+    tree_buf: S,
+    len: usize,
+    _phantom: PhantomData<(K, V)>,
 }
 
-impl<V> Default for BVecTree<V> {
+impl<S: Default + Vector<BVecTreeNode<K, V>>, K, V> Default for BVecTreeMap<S, K, V> {
     fn default() -> Self {
         Self {
             root: None,
             free_head: None,
-            tree_buf: vec![],
+            tree_buf: S::default(),
+            len: 0,
+            _phantom: PhantomData::default(),
         }
     }
 }
 
-impl<V: Ord + Debug> BVecTree<V> {
+impl<K: Ord + Debug, V: Debug> BVecTreeMap<Vec<BVecTreeNode<K, V>>, K, V> {
     pub fn new() -> Self {
         Self::default()
     }
+}
 
-    pub fn iter(&self) -> impl Iterator<Item = &V> {
-        self.tree_buf
-            .iter()
-            .flat_map(|x| x.keys.iter().filter_map(|x| x.as_ref()))
-    }
-
-    pub fn node_iter(&self) -> impl Iterator<Item = &BVecTreeNode<V>> {
-        self.tree_buf.iter()
-    }
+impl<S: Default + Vector<BVecTreeNode<K, V>>, K: Ord + Debug, V: Debug> BVecTreeMap<S, K, V> {
+    //TODO: (for full feature parity)
+    //append
+    //entry
+    //get
+    //get_mut
+    //iter
+    //iter_mut
+    //keys
+    //range
+    //range_mut
+    //split_off
+    //values
+    //values_mut
 
     pub fn len(&self) -> usize {
-        self.iter().count()
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
@@ -231,14 +262,14 @@ impl<V: Ord + Debug> BVecTree<V> {
         }
     }
 
-    pub fn contains(&self, value: &V) -> bool {
+    pub fn contains_key(&self, key: &K) -> bool {
         if let Some(idx) = self.root {
             let mut cur_node = idx;
 
             loop {
                 let node = self.get_node(cur_node);
 
-                let (idx, exact) = node.find_key_id(value);
+                let (idx, exact) = node.find_key_id(key);
 
                 if exact {
                     return true;
@@ -255,7 +286,17 @@ impl<V: Ord + Debug> BVecTree<V> {
         false
     }
 
-    pub fn insert(&mut self, value: V) -> Option<V> {
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        let ret = self.insert_internal((key, value));
+        if ret.is_some() {
+            Some(ret.unwrap().1)
+        } else {
+            self.len += 1;
+            None
+        }
+    }
+
+    fn insert_internal(&mut self, value: (K, V)) -> Option<(K, V)> {
         if let Some(idx) = self.root {
             let root_node = self.get_node_mut(idx);
 
@@ -280,26 +321,25 @@ impl<V: Ord + Debug> BVecTree<V> {
                 break;
             }
 
-            let (mut idx, exact) = node.find_key_id(&value);
+            let (mut idx, exact) = node.find_key_id(&value.0);
 
             if exact {
-                let ret = mem::replace(&mut node.keys[idx], Some(value));
-                return ret;
+                return node.insert_node_at(value, idx);
             } else {
                 let child = node.children[idx].unwrap();
 
                 if self.get_node(child).cur_keys == MAX_KEYS {
                     self.split_child(cur_node, idx);
 
-                    match value.cmp(self.get_node(cur_node).keys[idx].as_ref().unwrap()) {
+                    match value
+                        .0
+                        .cmp(&self.get_node(cur_node).keys[idx].as_ref().unwrap().0)
+                    {
                         Ordering::Greater => {
                             idx += 1;
                         }
                         Ordering::Equal => {
-                            return mem::replace(
-                                &mut self.get_node_mut(cur_node).keys[idx],
-                                Some(value),
-                            );
+                            return self.get_node_mut(cur_node).insert_node_at(value, idx);
                         }
                         Ordering::Less => {}
                     }
@@ -312,13 +352,23 @@ impl<V: Ord + Debug> BVecTree<V> {
         self.insert_node(cur_node, value)
     }
 
-    pub fn remove(&mut self, value: &V) -> Option<V> {
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        let ret = self.remove_entry(key);
+        if ret.is_some() {
+            self.len -= 1;
+            Some(ret.unwrap().1)
+        } else {
+            None
+        }
+    }
+
+    pub fn remove_entry(&mut self, key: &K) -> Option<(K, V)> {
         let mut cur_node = self.root;
 
         while let Some(node_idx) = cur_node {
             let node = self.get_node(node_idx);
 
-            let (idx, exact) = node.find_key_id(value);
+            let (idx, exact) = node.find_key_id(key);
 
             if exact {
                 if node.leaf {
@@ -367,7 +417,7 @@ impl<V: Ord + Debug> BVecTree<V> {
                     cur_node = Some(ret);
                 } else {
                     let node = self.get_node(node_idx);
-                    cur_node = node.children[node.find_key_id(value).0];
+                    cur_node = node.children[node.find_key_id(key).0];
                 }
             } else {
                 cur_node = node.children[idx];
@@ -377,7 +427,7 @@ impl<V: Ord + Debug> BVecTree<V> {
         None
     }
 
-    fn remove_key(&mut self, node_id: u32, key_id: usize) -> (Option<V>, Option<u32>) {
+    fn remove_key(&mut self, node_id: u32, key_id: usize) -> (Option<(K, V)>, Option<u32>) {
         let node = self.get_node_mut(node_id);
         node.remove_key(key_id)
     }
@@ -479,12 +529,12 @@ impl<V: Ord + Debug> BVecTree<V> {
         self.get_node_mut(parent).children[child_id + 1] = Some(new_node);
     }
 
-    fn insert_node(&mut self, node_id: u32, value: V) -> Option<V> {
+    fn insert_node(&mut self, node_id: u32, value: (K, V)) -> Option<(K, V)> {
         self.get_node_mut(node_id).insert_node(value)
     }
 
-    fn get_node_mut(&mut self, id: u32) -> &mut BVecTreeNode<V> {
-        self.tree_buf.get_mut(id as usize).unwrap()
+    fn get_node_mut(&mut self, id: u32) -> &mut BVecTreeNode<K, V> {
+        self.tree_buf.slice_mut().get_mut(id as usize).unwrap()
     }
 
     /// Returns 2 individual mutable nodes
@@ -492,17 +542,17 @@ impl<V: Ord + Debug> BVecTree<V> {
         &mut self,
         left: u32,
         right: u32,
-    ) -> (&mut BVecTreeNode<V>, &mut BVecTreeNode<V>) {
+    ) -> (&mut BVecTreeNode<K, V>, &mut BVecTreeNode<K, V>) {
         debug_assert!(left != right);
 
         if left < right {
-            let (_, br) = self.tree_buf.split_at_mut(left as usize);
+            let (_, br) = self.tree_buf.slice_mut().split_at_mut(left as usize);
             let (left_ret, right_side) = br.split_first_mut().unwrap();
             let (_, br) = right_side.split_at_mut((right - left - 1) as usize);
             let (right_ret, _) = br.split_first_mut().unwrap();
             (left_ret, right_ret)
         } else {
-            let (_, br) = self.tree_buf.split_at_mut(right as usize);
+            let (_, br) = self.tree_buf.slice_mut().split_at_mut(right as usize);
             let (right_ret, right_side) = br.split_first_mut().unwrap();
             let (_, br) = right_side.split_at_mut((left - right - 1) as usize);
             let (left_ret, _) = br.split_first_mut().unwrap();
@@ -514,7 +564,10 @@ impl<V: Ord + Debug> BVecTree<V> {
         &mut self,
         parent: u32,
         key: usize,
-    ) -> (&mut Option<V>, (&mut BVecTreeNode<V>, &mut BVecTreeNode<V>)) {
+    ) -> (
+        &mut Option<(K, V)>,
+        (&mut BVecTreeNode<K, V>, &mut BVecTreeNode<K, V>),
+    ) {
         let parent_node = self.get_node_mut(parent);
         let left = parent_node.children[key].unwrap();
         let right = parent_node.children[key + 1].unwrap();
@@ -525,8 +578,8 @@ impl<V: Ord + Debug> BVecTree<V> {
         (key_mut, self.get_two_nodes_mut(left, right))
     }
 
-    fn get_node(&self, id: u32) -> &BVecTreeNode<V> {
-        self.tree_buf.get(id as usize).unwrap()
+    fn get_node(&self, id: u32) -> &BVecTreeNode<K, V> {
+        self.tree_buf.slice().get(id as usize).unwrap()
     }
 
     fn allocate_node(&mut self) -> u32 {
@@ -586,7 +639,7 @@ impl<V: Ord + Debug> BVecTree<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::BVecTree;
+    use crate::BVecTreeMap;
     use rand::{seq::SliceRandom, Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
     use std::collections::BTreeSet;
@@ -602,19 +655,18 @@ mod tests {
             let entries: Vec<_> = (0..1000).map(|_| rng.gen_range(0, 50000usize)).collect();
             let entries_s: Vec<_> = (0..1000).map(|_| rng.gen_range(0, 50000usize)).collect();
 
-            let mut tree = BVecTree::new();
+            let mut tree = BVecTreeMap::new();
             let mut set = BTreeSet::new();
 
             for i in entries.iter() {
                 set.insert(*i);
-                tree.insert(*i);
+                tree.insert(*i, ());
             }
 
             for i in entries_s.iter() {
-                assert_eq!(set.contains(i), tree.contains(i));
+                assert_eq!(set.contains(i), tree.contains_key(i));
             }
 
-            assert_eq!(tree.iter().count(), set.iter().count());
             assert_eq!(tree.len(), set.len());
         }
     }
@@ -629,12 +681,12 @@ mod tests {
 
             let entries: Vec<_> = (0..1000).map(|_| rng.gen_range(0, 50000usize)).collect();
 
-            let mut tree = BVecTree::new();
+            let mut tree = BVecTreeMap::new();
             let mut set = BTreeSet::new();
 
             for i in entries.iter() {
                 set.insert(*i);
-                tree.insert(*i);
+                tree.insert(*i, ());
             }
 
             let mut entries_r: Vec<_> = set.iter().copied().collect();
@@ -649,11 +701,10 @@ mod tests {
                     "{:?} {:?} {:?}",
                     ret_tree,
                     i,
-                    tree.contains(&i)
+                    tree.contains_key(&i)
                 );
             }
 
-            assert_eq!(tree.iter().count(), set.iter().count());
             assert_eq!(tree.len(), set.len());
         }
     }

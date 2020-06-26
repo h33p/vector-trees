@@ -1,14 +1,17 @@
 [package]
-name = "vectreemap"
+name = "vector-trees"
 version = "0.1.0"
 authors = ["Aurimas Blažulionis <0x60@pm.me>"]
 edition = "2018"
+license = "MIT"
+description = "Vector backed B and AVL trees"
+homepage = "https://github.com/h33p/vector-trees"
+repository = "https://github.com/h33p/vector-trees"
+readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[profile.release]
-#lto = true
-debug = true
+[features]
+default = []
+avltree = []
 
 [dev-dependencies]
 rand = "0.7"

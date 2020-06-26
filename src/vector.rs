@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 
 /// This trait abstracts away a vector implementation.
 ///
@@ -21,6 +22,29 @@ impl<T> Vector<T> for Vec<T> {
 
     fn push(&mut self, value: T) {
         Vec::push(self, value);
+    }
+
+    fn slice(&self) -> &[T] {
+        self
+    }
+
+    fn slice_mut(&mut self) -> &mut [T] {
+        self
+    }
+}
+
+#[cfg(feature = "bumpalo")]
+impl<T> Vector<T> for bumpalo::collections::Vec<'_, T> {
+    fn clear(&mut self) {
+        bumpalo::collections::Vec::clear(self);
+    }
+
+    fn len(&self) -> usize {
+        bumpalo::collections::Vec::len(self)
+    }
+
+    fn push(&mut self, value: T) {
+        bumpalo::collections::Vec::push(self, value);
     }
 
     fn slice(&self) -> &[T] {

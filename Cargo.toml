@@ -13,6 +13,9 @@ readme = "README.md"
 default = []
 avltree = []
 
+[dependencies]
+bumpalo = { version = "3.4.0", features = ["collections"], optional = true }
+
 [dev-dependencies]
 rand = "0.7"
 rand_xorshift = { version = "0.2.0" }

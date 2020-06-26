@@ -1,3 +1,6 @@
+#![cfg_attr(not(test), no_std)]
+extern crate alloc;
+
 #[cfg(feature = "avltree")]
 pub mod avltree;
 pub mod btree;

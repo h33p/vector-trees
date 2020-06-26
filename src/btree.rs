@@ -1,4 +1,5 @@
 use crate::Vector;
+use alloc::vec::Vec;
 use core::cmp::{Ord, Ordering};
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -216,7 +217,7 @@ impl<K: Ord + Debug, V: Debug> BVecTreeMap<Vec<BVecTreeNode<K, V>>, K, V> {
     }
 }
 
-impl<S: Default + Vector<BVecTreeNode<K, V>>, K: Ord + Debug, V: Debug> BVecTreeMap<S, K, V> {
+impl<S: Vector<BVecTreeNode<K, V>>, K: Ord + Debug, V: Debug> BVecTreeMap<S, K, V> {
     //TODO: (for full feature parity)
     //append
     //entry
@@ -230,6 +231,16 @@ impl<S: Default + Vector<BVecTreeNode<K, V>>, K: Ord + Debug, V: Debug> BVecTree
     //split_off
     //values
     //values_mut
+
+    pub fn new_in(buf: S) -> Self {
+        Self {
+            tree_buf: buf,
+            root: None,
+            free_head: None,
+            len: 0,
+            _phantom: PhantomData::default(),
+        }
+    }
 
     pub fn len(&self) -> usize {
         self.len
@@ -260,6 +271,30 @@ impl<S: Default + Vector<BVecTreeNode<K, V>>, K: Ord + Debug, V: Debug> BVecTree
         } else {
             0
         }
+    }
+
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        if let Some(idx) = self.root {
+            let mut cur_node = idx;
+
+            loop {
+                let node = self.get_node_mut(cur_node);
+
+                let (idx, exact) = node.find_key_id(key);
+
+                if exact {
+                    return Some(&mut self.get_node_mut(cur_node).keys[idx].as_mut().unwrap().1);
+                }
+
+                if node.leaf {
+                    break;
+                }
+
+                cur_node = node.children[idx].unwrap();
+            }
+        }
+
+        None
     }
 
     pub fn contains_key(&self, key: &K) -> bool {
@@ -606,34 +641,6 @@ impl<S: Default + Vector<BVecTreeNode<K, V>>, K: Ord + Debug, V: Debug> BVecTree
 
         node.children[0] = head;
         self.free_head = Some(node_id);
-    }
-
-    pub fn print_tree(&self) {
-        if let Some(idx) = self.root {
-            self.print_tree_internal(idx, 0);
-        }
-    }
-
-    fn print_tree_internal(&self, cur_node: u32, indent: usize) {
-        print!("{:02} ", cur_node);
-        for _ in 0..indent {
-            print!("===");
-        }
-
-        let node = self.get_node(cur_node);
-
-        for i in node.keys.iter().take(node.cur_keys) {
-            print!("{:?} ", i);
-        }
-
-        println!("|");
-
-        if !node.leaf {
-            node.children
-                .iter()
-                .take(node.cur_keys + 1)
-                .for_each(|x| self.print_tree_internal(x.unwrap(), indent + 1));
-        }
     }
 }
 
